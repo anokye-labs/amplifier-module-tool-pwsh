@@ -8,9 +8,7 @@ __amplifier_module_type__ = "tool"
 
 import asyncio
 import logging
-import os
 import shutil
-import signal
 import subprocess
 import sys
 from typing import Any
@@ -267,7 +265,10 @@ SAFETY:
             ("stop-computer", "System shutdown"),
             ("restart-computer", "System restart"),
             # Dangerous Remove-Item patterns
-            ("remove-item -recurse -force $env:systemroot", "System directory deletion"),
+            (
+                "remove-item -recurse -force $env:systemroot",
+                "System directory deletion",
+            ),
             ("remove-item -recurse -force c:\\windows", "System directory deletion"),
             ("remove-item -recurse -force c:\\", "Root directory deletion"),
             ("remove-item -r -fo c:\\", "Root directory deletion"),
@@ -362,8 +363,6 @@ SAFETY:
 
     async def _run_command(self, command: str, pwsh_exe: str) -> dict[str, Any]:
         """Run PowerShell command and wait for completion."""
-        is_windows = sys.platform == "win32"
-
         process = await asyncio.create_subprocess_exec(
             pwsh_exe,
             "-NoProfile",

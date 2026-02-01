@@ -8,6 +8,7 @@ import asyncio
 import sys
 import os
 
+
 # Mock amplifier_core before importing the module
 class MockToolResult:
     def __init__(self, success: bool, output: dict = None, error: dict = None):
@@ -36,7 +37,7 @@ sys.modules["amplifier_core"] = MockAmplifierCore()
 
 # Add module path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from amplifier_module_tool_pwsh import PwshTool
+from amplifier_module_tool_pwsh import PwshTool  # noqa: E402
 
 
 async def run_tests():
@@ -72,7 +73,9 @@ async def run_tests():
     # Test 4: Pipeline command
     print("\n[Test 4] Pipeline command")
     result = await tool.execute(
-        {"command": "Get-Process | Select-Object -First 3 Name, Id | Format-Table -AutoSize"}
+        {
+            "command": "Get-Process | Select-Object -First 3 Name, Id | Format-Table -AutoSize"
+        }
     )
     print(f"  Success: {result.success}")
     print(f"  Return code: {result.output.get('returncode')}")
@@ -82,7 +85,9 @@ async def run_tests():
 
     # Test 5: Math expression
     print("\n[Test 5] PowerShell expression")
-    result = await tool.execute({"command": "$a = 10; $b = 20; Write-Output \"Sum: $($a + $b)\""})
+    result = await tool.execute(
+        {"command": '$a = 10; $b = 20; Write-Output "Sum: $($a + $b)"'}
+    )
     print(f"  Success: {result.success}")
     print(f"  Output: {result.output.get('stdout', '').strip()}")
 
