@@ -65,43 +65,16 @@ class PwshTool:
     """Execute PowerShell commands with safety features."""
 
     name = "pwsh"
-    description = """
-PowerShell command execution. Use this for Windows-native operations and cross-platform
-PowerShell scripts where pwsh is installed.
-
-WHEN TO USE PWSH:
-- Windows system administration (Get-Service, Get-Process, registry operations)
-- Cross-platform PowerShell scripts
-- Working with .NET objects and cmdlets
-- Windows-specific package management (winget, chocolatey)
-- Azure and Microsoft 365 administration
-
-POWERSHELL FEATURES:
-- Object-oriented pipelines: Get-Process | Where-Object CPU -gt 100
-- Cmdlets: Get-ChildItem, Invoke-WebRequest, ConvertTo-Json
-- Variables: $env:PATH, $HOME, $PSVersionTable
-- Cross-platform paths: Join-Path $HOME ".config"
-
-OUTPUT LIMITS:
-- Long outputs are automatically truncated to prevent context overflow
-- When truncated, you'll see: first lines, "[...truncated...]", last lines, and byte counts
-- WARNING: If output contains JSON, XML, or similar structured data, truncation may break parsing
-- WORKAROUND: For large structured output, redirect to a file (command | Out-File output.txt) and use
-  file reading capabilities to inspect portions of the file as needed
-
-COMMAND GUIDELINES:
-- Use cmdlet names for clarity: Get-ChildItem not ls (though aliases work)
-- Use splatting for complex commands with many parameters
-- Chain commands with |, &&, or ; as needed
-- Commands time out after 30 seconds by default. Pass `timeout` to increase for long-running
-  commands (builds, tests, monitoring). Use `run_in_background` for truly indefinite processes.
-- Use `run_in_background` for long-running processes (dev servers, watchers)
-- Interactive commands (-i flags, editors requiring input) are not supported
-
-SAFETY:
-- Destructive commands (Remove-Item -Recurse on system paths, Format-Volume) are blocked
-- Commands requiring interactive input will fail
-                   """
+    description = (
+        "Execute PowerShell commands. Preferred over bash on Windows platforms.\n\n"
+        "WHEN TO USE THIS TOOL:\n"
+        "- On Windows: use pwsh for ALL system operations (preferred over bash)\n"
+        "- On Linux/macOS: use pwsh when PowerShell-specific cmdlets are needed\n"
+        "- For cross-platform scripts: pwsh works on Windows, Linux, and macOS\n\n"
+        "WINDOWS NOTE: Unix tools (grep, find, cat, ls) are NOT available natively on Windows.\n"
+        "Use PowerShell equivalents: Select-String, Get-ChildItem, Get-Content.\n\n"
+        "Use bash only for explicitly cross-platform bash scripts on Windows."
+    )
 
     # Default output limit: ~100KB (roughly 25k tokens)
     DEFAULT_MAX_OUTPUT_BYTES = 100_000
