@@ -118,6 +118,20 @@ class TestPwshExecution:
         assert not result.success
         assert "timed out" in result.error["message"].lower()
 
+    @pytest.mark.asyncio
+    async def test_per_call_timeout_override(self, tool):
+        """Test that timeout parameter in input overrides the class-level default."""
+        # The fixture tool has a 30 s class-level timeout, but we pass 2 s
+        # per-call via the input dict — the command must be killed early.
+        result = await tool.execute(
+            {
+                "command": "Start-Sleep -Seconds 60",
+                "timeout": 2,
+            }
+        )
+        assert not result.success
+        assert "timed out" in result.error["message"].lower()
+
 
 class TestPwshDiscovery:
     """Test PowerShell executable discovery logic."""

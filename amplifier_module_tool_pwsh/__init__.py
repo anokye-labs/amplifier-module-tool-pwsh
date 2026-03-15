@@ -321,15 +321,20 @@ class PwshTool:
         # Truncate at byte level from the end
         truncated_bytes = encoded[-budget:]
 
-        # Find valid UTF-8 boundary by trying to decode
-        # Work forwards until we get valid UTF-8 (skip partial char at start)
+        # Find valid UTF-8 boundary by trying to decode.
+        # Work forwards until we get valid UTF-8 (skip partial char at start).
+        # We scan at most 4 positions because a UTF-8 continuation sequence is
+        # at most 3 bytes wide (leading byte + up to 3 continuation bytes).
         for i in range(min(4, len(truncated_bytes))):
             try:
                 return truncated_bytes[i:].decode("utf-8")
             except UnicodeDecodeError:
                 continue
 
-        # Fallback: decode with error replacement (shouldn't normally happen)
+        # Edge-case fallback: all 4 scanned bytes are continuation bytes
+        # (0x80–0xBF), which would only happen with a corrupted or non-UTF-8
+        # byte stream. errors="ignore" silently drops the undecodable bytes
+        # rather than raising, keeping the tool output usable.
         return truncated_bytes.decode("utf-8", errors="ignore")
 
     def _truncate_output(self, output: str) -> tuple[str, bool, int]:
@@ -456,8 +461,15 @@ class PwshTool:
     ) -> dict[str, Any]:
         """Run PowerShell command asynchronously and wait for completion.
 
-        Uses process groups for proper cleanup on timeout — kills entire
-        process tree, not just the top-level pwsh process.
+        On Unix, uses process groups (start_new_session=True) for proper
+        cleanup on timeout — kills the entire process tree, not just the
+        top-level pwsh process.
+
+        On Windows there is no equivalent of UNIX process groups accessible
+        from asyncio.create_subprocess_exec, so on timeout only the top-level
+        pwsh process is killed via process.kill(). Child processes spawned by
+        the script may linger; use the 'unrestricted' profile with caution in
+        long-running Windows scenarios.
         """
         is_windows = sys.platform == "win32"
         pgid = None
@@ -471,7 +483,8 @@ class PwshTool:
 
         if not is_windows:
             # start_new_session=True creates a new process group, enabling
-            # us to kill the entire process tree on timeout (not just pwsh)
+            # us to kill the entire process tree on timeout (not just pwsh).
+            # No Windows equivalent is available via asyncio subprocess.
             kwargs["start_new_session"] = True
 
         process = await asyncio.create_subprocess_exec(

@@ -110,7 +110,6 @@ def _full_blocked_patterns() -> list[BlockPattern]:
         # --- Disk / partition operations (command position) ---
         BlockPattern("Format-Volume", "Disk formatting operation", "command"),
         BlockPattern("Clear-Disk", "Disk clearing operation", "command"),
-        BlockPattern("Clear-Disk", "Disk clearing operation", "substring"),
         BlockPattern("Initialize-Disk", "Disk initialization", "command"),
         BlockPattern("Remove-Partition", "Partition removal", "command"),
         # --- System power operations (command position) ---
@@ -237,13 +236,14 @@ PROFILES: dict[str, SafetyProfile] = {
 class SafetyValidator:
     """Validates commands against safety rules based on configured profile.
 
-    The validator uses a layered approach:
+    The validator uses a layered approach where deny rules always take
+    priority over allow rules (except the unrestricted bypass):
     1. Unrestricted profile bypasses all checks
-    2. Allowlist checked first (if profile allows overrides)
-    3. Blocked patterns checked with smart matching
-    4. Custom denied_commands checked
-    5. Override blocks checked
-    6. Default: allow
+    2. Blocked patterns checked with smart matching
+       (allowlist can bypass these for profiles with allow_overrides=True)
+    3. Custom denied_commands checked — cannot be bypassed by allowlist
+    4. Override blocks (safety_overrides.block) checked — cannot be bypassed
+    5. Default: allow
 
     Example:
         >>> validator = SafetyValidator(profile="strict")
@@ -299,22 +299,31 @@ class SafetyValidator:
         if self.profile.name == "unrestricted":
             return SafetyResult(allowed=True)
 
-        # 2. Check allowlist (if profile allows overrides)
-        if self.profile.allow_overrides:
-            if self._matches_allowlist(command):
-                return SafetyResult(allowed=True)
-
-        # 3. Check blocked patterns with smart matching
+        # 2. Check blocked patterns with smart matching.
+        # For profiles with allow_overrides=True the allowlist can bypass
+        # profile-level blocked patterns — but NOT denied_commands or
+        # safety_overrides.block (checked in steps 3-4 below).
+        profile_block: BlockPattern | None = None
         for pattern in self.profile.blocked_patterns:
             if self._check_pattern(command, pattern):
+                profile_block = pattern
+                break
+
+        if profile_block is not None:
+            # Only skip the profile block if the profile permits overrides
+            # AND the command actually appears on the allowlist.
+            if not (
+                self.profile.allow_overrides and self._matches_allowlist(command)
+            ):
                 return SafetyResult(
                     allowed=False,
-                    reason=pattern.reason,
-                    matched_pattern=pattern.pattern,
+                    reason=profile_block.reason,
+                    matched_pattern=profile_block.pattern,
                     hint="Use safety_profile: 'permissive' or 'unrestricted' for container/VM environments",
                 )
 
-        # 4. Check custom denied_commands (supports wildcards)
+        # 3. Check custom denied_commands (supports wildcards).
+        # denied_commands CANNOT be bypassed by allowed_commands / allowlist.
         for denied in self.denied_commands:
             if self._matches_wildcard(command, denied):
                 return SafetyResult(
@@ -324,7 +333,8 @@ class SafetyValidator:
                     hint="Remove from denied_commands or add to allowed_commands (if profile allows overrides)",
                 )
 
-        # 5. Check override blocks (from safety_overrides.block)
+        # 4. Check override blocks (from safety_overrides.block).
+        # safety_overrides.block CANNOT be bypassed by allowed_commands / allowlist.
         for block_pattern in self._override_blocks:
             if self._matches_wildcard(command, block_pattern):
                 return SafetyResult(
@@ -334,7 +344,7 @@ class SafetyValidator:
                     hint="Remove from safety_overrides.block",
                 )
 
-        # 6. Default: allow
+        # 5. Default: allow
         return SafetyResult(allowed=True)
 
     def _matches_allowlist(self, command: str) -> bool:
@@ -409,10 +419,17 @@ class SafetyValidator:
                 quote_char = command[i]
                 start = i
                 i += 1
-                # Find the closing quote, handling escapes
+                # Find the closing quote, handling escapes.
+                # PowerShell uses backtick (`) as the escape character in
+                # double-quoted strings only. Single-quoted strings are
+                # completely literal — they have NO escape character.
                 while i < len(command):
-                    if command[i] == "\\" and i + 1 < len(command):
-                        # Skip escaped character
+                    if (
+                        quote_char == '"'
+                        and command[i] == "`"
+                        and i + 1 < len(command)
+                    ):
+                        # Skip backtick-escaped character (e.g. `" embeds a quote)
                         i += 2
                         continue
                     if command[i] == quote_char:
@@ -462,14 +479,16 @@ class SafetyValidator:
         if not prefix:
             return True
 
-        # Get the portion before idx and strip trailing whitespace
-        before = command[:idx].rstrip()
+        # Strip trailing horizontal whitespace (spaces, tabs, carriage returns)
+        # but NOT newlines, so that "\n" can be matched as a command separator.
+        before = command[:idx].rstrip(" \t\r")
         if not before:
             return True
 
         # Check what the command portion ends with.
-        # PowerShell command starters: ; | && || ( $( @( {
-        command_starters = [";", "|", "&&", "||", "(", "$(", "@(", "{"]
+        # PowerShell command starters: ; | && || ( $( @( { ` (backtick
+        # continuation) and \n (newline as statement separator).
+        command_starters = [";", "|", "&&", "||", "(", "$(", "@(", "{", "`", "\n"]
         for starter in command_starters:
             if before.endswith(starter):
                 return True
@@ -566,8 +585,10 @@ class SafetyValidator:
             True if pattern matches
         """
         try:
-            # Use search, not match, to find pattern anywhere
-            return bool(re.search(pattern, command))
+            # Use search, not match, to find pattern anywhere.
+            # re.IGNORECASE is required because PowerShell is case-insensitive,
+            # so "invoke-expression" must match the "Invoke-Expression" pattern.
+            return bool(re.search(pattern, command, re.IGNORECASE))
         except re.error:
             # Invalid regex, treat as no match
             return False

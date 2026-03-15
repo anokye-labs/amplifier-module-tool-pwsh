@@ -200,6 +200,28 @@ class TestFalsePositivePrevention:
         result = validator.validate("$null; Stop-Computer")
         assert not result.allowed, "Stop-Computer after semicolon should be blocked"
 
+    def test_backtick_escaped_quote_does_not_bypass(self):
+        """Backtick is PowerShell's escape char, not backslash.
+
+        A command like "a\\"; Format-Volume should be blocked because
+        backslash is NOT an escape character in PowerShell double-quoted
+        strings. The closing double-quote comes right after the backslash,
+        not after the semicolon, so Format-Volume is in command position.
+        """
+        validator = SafetyValidator(profile="strict")
+        # In PowerShell, backslash is a literal character inside strings.
+        # The quote closes at the second `"` (after `a\`), NOT at the `\"`.
+        # Therefore "; Format-Volume -DriveLetter C" is outside the string
+        # and Format-Volume is in command position — it must be blocked.
+        result = validator.validate('"a\\"; Format-Volume -DriveLetter C')
+        assert not result.allowed
+
+    def test_dangerous_command_after_newline_blocked(self):
+        """Newlines should be treated as statement separators."""
+        validator = SafetyValidator(profile="strict")
+        result = validator.validate("Get-Process\nFormat-Volume -DriveLetter C")
+        assert not result.allowed
+
 
 class TestAllowlistOverrides:
     """Test allowlist behavior with different profiles."""
@@ -434,14 +456,17 @@ class TestPatternTypes:
     def test_substring_type_matches_anywhere(self):
         """Substring-type patterns should match anywhere, including inside quotes.
 
-        Clear-Disk uses check_type='substring', so it matches even when
-        embedded inside a quoted string — unlike command-type patterns.
+        Set-ExecutionPolicy Unrestricted uses check_type='substring', so it
+        matches even when embedded inside a quoted string — unlike command-type
+        patterns which only fire at command position.
         """
         validator = SafetyValidator(profile="strict")
 
-        # Clear-Disk inside a quoted string should still be blocked
-        # because substring matching doesn't respect quote boundaries
-        result = validator.validate("Write-Output 'Clear-Disk is dangerous'")
+        # Set-ExecutionPolicy Unrestricted inside a quoted string should still
+        # be blocked because substring matching doesn't respect quote boundaries.
+        result = validator.validate(
+            "Write-Output 'Set-ExecutionPolicy Unrestricted is dangerous'"
+        )
         assert not result.allowed
 
     def test_regex_type_uses_regex(self):
@@ -460,3 +485,34 @@ class TestPatternTypes:
         # Safe mention of Invoke-Expression without a pipe before it
         result = validator.validate("Write-Output 'avoid Invoke-Expression'")
         assert result.allowed
+
+    def test_regex_case_insensitive(self):
+        """Regex patterns must be case-insensitive since PowerShell is.
+
+        PowerShell cmdlet names are case-insensitive, so 'invoke-expression'
+        is identical to 'Invoke-Expression' at runtime. The regex engine must
+        apply re.IGNORECASE so lower-case variants are still caught.
+        """
+        validator = SafetyValidator(profile="strict")
+        # All-lowercase variant of the pipeline injection pattern
+        result = validator.validate("Get-Content malicious.ps1 | invoke-expression")
+        assert not result.allowed
+
+    def test_denied_commands_override_allowlist(self):
+        """denied_commands must take priority over allowed_commands.
+
+        When a command matches both an allowlist pattern and a denied_commands
+        pattern, the denial must win. The allowlist must NOT be able to bypass
+        custom denied_commands — only profile-level blocked_patterns can be
+        overridden by the allowlist (in profiles with allow_overrides=True).
+        """
+        validator = SafetyValidator(
+            profile="standard",
+            config=SafetyConfig(
+                profile="standard",
+                allowed_commands=["Invoke-*"],
+                denied_commands=["Invoke-WebRequest*malicious*"],
+            ),
+        )
+        result = validator.validate("Invoke-WebRequest https://malicious.example.com")
+        assert not result.allowed
